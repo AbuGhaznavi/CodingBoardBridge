@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace BoardWriteServer
+﻿namespace BoardWriteServer
 {
     // Filename:  HttpServer.cs        
     // Author:    Benjamin N. Summerton <define-private-public>        
@@ -12,9 +6,10 @@ namespace BoardWriteServer
 
     using System;
     using System.IO;
-    using System.Text;
     using System.Net;
+    using System.Text;
     using System.Threading.Tasks;
+    using System.Collections.Specialized;
 
     namespace HttpListenerExample
     {
@@ -22,6 +17,8 @@ namespace BoardWriteServer
         {
             public static HttpListener listener;
             public static CP2112Device SFPWriter;
+            public static CP2112Device CP2SearchInstance;
+            public static uint selectedInt;
             public static string url = "http://localhost:42069/";
             public static int pageViews = 0;
             public static int requestCount = 0;
@@ -69,6 +66,9 @@ namespace BoardWriteServer
                     Console.WriteLine();
 
 
+                    // Allow OPTIONS
+
+
                     // If `shutdown` url requested w/ POST, then shutdown the server after serving the page
                     if ((req.HttpMethod == "POST") && (req.Url.AbsolutePath == "/shutdown"))
                     {
@@ -79,9 +79,62 @@ namespace BoardWriteServer
 
                     }
 
+
+                    // Handle Request for Device Indices (Per CP2112 interface)
+                    if (req.HttpMethod == "GET" && (req.Url.AbsolutePath == "/GetDevices")) {
+                        // Retrieve the indices
+                        SFPWriter = new CP2112Device();
+                        uint[] validBoardIndices = SFPWriter.searchDevices();
+                        string[] indicesString = new string[validBoardIndices.Length];
+                        for (int x = 0; x < validBoardIndices.Length; x++)
+                        {
+                            indicesString[x] = "\"CP2112 " + validBoardIndices[x].ToString() + "\"";
+                        }
+                        string joinedIndices = string.Join(",", indicesString);
+                        string result = "{\"num_devices\":" + validBoardIndices.Length + ",\"devices\":[" + joinedIndices + "]}";
+                        byte[] device_bytes = Encoding.UTF8.GetBytes(result);
+                        resp.ContentType = "text/json";
+                        resp.ContentEncoding = Encoding.UTF8;
+                        resp.ContentLength64 = device_bytes.Length;
+                        resp.Headers.Add("Access-Control-Allow-Origin: *");
+                        await resp.OutputStream.WriteAsync(device_bytes, 0, device_bytes.Length);
+                        continue;
+                    }
+
+
+                    // Handle Post Methods for Write Requests
+                    if (req.HttpMethod == "POST" && req.Url.AbsolutePath == "/WritePart")
+                    {
+                        Console.WriteLine("Writing part");
+                        byte[] nd = Encoding.UTF8.GetBytes("Test response");
+                        resp.ContentType = "text/html";
+                        resp.ContentEncoding = Encoding.UTF8;
+                        resp.ContentLength64 = nd.Length;
+                        resp.Headers.Add("Access-Control-Allow-Origin: *");
+
+                        string post_data;
+                        using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
+                        {
+                            post_data = reader.ReadToEnd();
+                        }
+                        Console.WriteLine("POSTED DATA:");
+                        Console.WriteLine(post_data);
+
+                        // Write out to the response stream (asynchronously), then close it
+                        await resp.OutputStream.WriteAsync(nd, 0, nd.Length);
+                        continue;
+                    }
+
                     // Make sure we don't increment the page views counter if `favicon.ico` is requested
                     if (req.Url.AbsolutePath != "/favicon.ico")
                         pageViews += 1;
+
+                    // Get selected index of device if possible
+                    NameValueCollection queryParams = req.QueryString;
+                    if (queryParams["devIndex"] != null)
+                    {
+                        selectedInt = uint.Parse(queryParams["devIndex"]);
+                    }
 
 
                     // Handle Parsing of URL Path
@@ -94,7 +147,8 @@ namespace BoardWriteServer
 
                     // Do the actual reading
                     SFPWriter = new CP2112Device();
-                    SFPWriter.device_index = Program.SFPDeduceDeviceIndex();
+                    SFPWriter.searchDevices();
+                    SFPWriter.device_index = selectedInt;
                     byte[] read = new byte[256];
 
                     byte[] intermRead = SFPWriter.BoardSafeRead(locAddress, 128, 0);

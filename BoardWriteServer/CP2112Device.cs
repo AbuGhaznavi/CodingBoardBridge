@@ -232,7 +232,7 @@ namespace BoardWriteServer
             for (uint i = 0; i < num_devices; i++)
             {
                 status = HidSmbus_GetAttributes(i, 0, 0, ref vid_read, ref pid_read, ref device_id);
-                if ((pid_read == XGIGA_DEVICE_PID) && (vid_read == XGIGA_DEVICE_VID))
+                if ((pid_read == XGIGA_DEVICE_PID) && (vid_read == XGIGA_DEVICE_VID) && (status == HID_SMBUS_SUCCESS))
                 {
                     device_index.Add(i);
                 }
