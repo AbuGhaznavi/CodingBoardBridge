@@ -8,11 +8,19 @@
     using System.IO;
     using System.Net;
     using System.Text;
+    using System.Text.Json.Serialization;
+    using System.Text.Json;
     using System.Threading.Tasks;
     using System.Collections.Specialized;
+    using System.Linq;
+    using System.Diagnostics;
+    using System.Threading;
 
     namespace HttpListenerExample
     {
+
+
+
         class HttpServer
         {
             public static HttpListener listener;
@@ -36,6 +44,13 @@
                 "  </body>" +
                 "</html>";
 
+            public static byte[] StringToByteArray(string hex)
+            {
+                return Enumerable.Range(0, hex.Length)
+                                 .Where(x => x % 2 == 0)
+                                 .Select(x => Convert.ToByte(hex.Substring(x, 2), 16))
+                                 .ToArray();
+            }
 
             public static async Task HandleIncomingConnections()
             {
@@ -51,7 +66,7 @@
                 {
                     // Will wait here until we hear from a connection
                     HttpListenerContext ctx = await listener.GetContextAsync();
-
+                    
                     // Peel out the requests and response objects
                     HttpListenerRequest req = ctx.Request;
                     HttpListenerResponse resp = ctx.Response;
@@ -74,11 +89,10 @@
                     {
                         Console.WriteLine("Shutdown requested");
                         runServer = false;
-                    } else if (req.HttpMethod == "GET")
-                    {
+                    } 
 
-                    }
 
+                    
 
                     // Handle Request for Device Indices (Per CP2112 interface)
                     if (req.HttpMethod == "GET" && (req.Url.AbsolutePath == "/GetDevices")) {
@@ -106,19 +120,79 @@
                     if (req.HttpMethod == "POST" && req.Url.AbsolutePath == "/WritePart")
                     {
                         Console.WriteLine("Writing part");
-                        byte[] nd = Encoding.UTF8.GetBytes("Test response");
-                        resp.ContentType = "text/html";
-                        resp.ContentEncoding = Encoding.UTF8;
-                        resp.ContentLength64 = nd.Length;
-                        resp.Headers.Add("Access-Control-Allow-Origin: *");
 
                         string post_data;
                         using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
                         {
                             post_data = reader.ReadToEnd();
                         }
-                        Console.WriteLine("POSTED DATA:");
-                        Console.WriteLine(post_data);
+
+                        // Deserialize WriteFields from browser input
+                        WriteFields writeFields = JsonSerializer.Deserialize<WriteFields>(post_data);
+
+                        // Get the values from the options
+                        uint address =  (uint) int.Parse(writeFields.AddressFields.rwAddress, System.Globalization.NumberStyles.HexNumber);
+                        uint segStart = (uint) int.Parse(writeFields.AddressFields.rwStart, System.Globalization.NumberStyles.HexNumber);
+                        uint segEnd =   (uint) int.Parse(writeFields.AddressFields.rwEnd, System.Globalization.NumberStyles.HexNumber);
+                        byte[] currentByteSelection = StringToByteArray(writeFields.PageInfo.curByteString);
+
+                        
+
+                        // Get relevant slice of input bytes
+                        byte[] selectionToWrite = new byte[segEnd + 1 - segStart];
+
+                        Array.Copy(currentByteSelection, segStart, selectionToWrite, 0, (segEnd - segStart) + 1);
+
+                        // Process the current byte string
+
+
+                        // Using the WriteFields Handle the Write
+                        SFPWriter = new CP2112Device();
+
+                        // Set the device from the fields 
+                        SFPWriter.device_index = (uint)writeFields.DeviceFields.deviceIndex;
+                        Stopwatch stopwatch = new Stopwatch();
+                        I2CProgrammer.READ_WRITE_DELAY = writeFields.ReadWriteFields.rwDelay;
+                        bool passwordWrite = false;
+                        stopwatch.Start();
+
+                        // Convert password write fields to necessary types
+                        
+
+                        // If a password is provided, write the password to the part
+                        if (writeFields.PasswordFields.passEnabled)
+                        {
+                            uint wPassAddress = (uint) int.Parse(writeFields.PasswordFields.passAddress, System.Globalization.NumberStyles.HexNumber);
+                            uint wPassIndex = (uint) int.Parse(writeFields.PasswordFields.passIndex, System.Globalization.NumberStyles.HexNumber);
+                            byte[] passKey = StringToByteArray(writeFields.PasswordFields.passKey);
+                            passwordWrite = SFPWriter.BoardSafeWrite(wPassAddress, wPassIndex, passKey);
+                        }
+
+                        bool write_success = SFPWriter.BoardSafeWrite(address, segStart, selectionToWrite);
+                        bool verification_success = false;
+
+                        
+
+
+                        stopwatch.Stop();
+
+                        TimeSpan ts = stopwatch.Elapsed;
+                        int milliseconds = ts.Milliseconds + (1000 * ts.Seconds);
+
+                        
+                        StatusReport report = new StatusReport();
+                        report.success = write_success;
+                        report.message = write_success ? "Success" : "Invalid Device";
+                        report.extraData = "";
+                        report.milliseconds = milliseconds;
+
+                        string reportJSON = JsonSerializer.Serialize<StatusReport>(report);
+
+                        byte[] nd = Encoding.UTF8.GetBytes(reportJSON);
+                        resp.ContentType = "text/html";
+                        resp.ContentEncoding = Encoding.UTF8;
+                        resp.ContentLength64 = nd.Length;
+                        resp.Headers.Add("Access-Control-Allow-Origin: *");
 
                         // Write out to the response stream (asynchronously), then close it
                         await resp.OutputStream.WriteAsync(nd, 0, nd.Length);
