@@ -57,6 +57,40 @@ namespace BoardWriteServer
         **/
     }
 
+    /************ Read Related Classes ****************/
+
+    public class ReadDataPacket
+    {
+        public string pageName  { get; set; }
+        public string pageHex { get; set; }
+    }
+
+    public class ReadReport
+    {
+        public String deviceStatus { get; set; }
+        public bool success { get; set; }
+        public ReadDataPacket[] dataPackets { get; set; }
+        public long milliseconds { get; set; }
+    }
+
+
+    /****** Read related classes *******/
+    public class ReadRequest {
+        public string partType { get; set; }
+
+        public List<String> pages { get; set; }
+        public int deviceIndex { get; set; }
+        public int numPages { get; set; }
+        public int dataRate { get; set; }
+        public int rwDelay { get; set; }
+        public string deviceName { get; set; }
+        public int readBytes { get; set; }
+
+
+    }
+
+
+    /*********** Write Related Classes **************/
     // A class to get converted to JSON after
     public class StatusReport
     {
